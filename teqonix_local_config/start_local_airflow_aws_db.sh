@@ -1,0 +1,1 @@
+docker run --rm -p 8080:8080 --volume=/usr/local/airflow:/usr/local/airflow --user=root  --env-file ./local_envs.env puckel/docker-airflow:latest webserver
