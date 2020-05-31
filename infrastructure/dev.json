@@ -1,0 +1,14 @@
+[
+    {
+        "ParameterKey": "RDSMasterPassword",
+        "ParameterValue": "2vQCtjH0RM8ZdY8BE8ClMw9"
+    },
+    {
+        "ParameterKey": "RDSInstanceType",
+        "ParameterValue": "db.t2.micro"
+    },        
+    {
+        "ParameterKey": "EC2InstanceType",
+        "ParameterValue": "t2.medium"
+    }
+]

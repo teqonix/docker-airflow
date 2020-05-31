@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A stack that launches an Airflow instance using ECS, EC2, and RDS
+Parameters:
+  RDSMasterPassword:
+    Type: String
+  RDSInstanceType:
+    Type: String
+    Default: db.t2.micro
+  EC2InstanceType:
+    Type: String
+    Default: t2.medium
+
+Resources:
+  AirflowVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.16.0.0/16
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+
+  AirflowVPCSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 172.16.0.0/28
+      MapPublicIpOnLaunch: True
+      VpcId: !Ref AirflowVPC
+      AvailabilityZone: "us-east-2a"
+
+  AirflowVPCSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 172.16.1.0/28
+      MapPublicIpOnLaunch: True
+      VpcId: !Ref AirflowVPC
+      AvailabilityZone: "us-east-2b"
+
+  AirflowVPCSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Has the EC2 Instances and DB for Airflow in it
+      GroupName: AirflowSecurityGroup
+      VpcId: !Ref AirflowVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 172.16.0.0/28
+
+  AirflowDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllowMajorVersionUpgrade: False
+      AutoMinorVersionUpgrade: True
+      BackupRetentionPeriod: 7
+      DBInstanceClass: !Sub ${RDSInstanceType}
+      DBName: airflow
+      DBSubnetGroupName: !Ref AirflowDBSubnet
+      Engine: postgres
+      MasterUsername: airflow
+      MasterUserPassword: !Sub ${RDSMasterPassword}
+      Port: "5432"
+      StorageEncrypted: False
+      StorageType: gp2
+      VPCSecurityGroups:
+        - !Ref AirflowVPCSecurityGroup
+      AllocatedStorage: "30"
+
+  AirflowDBSubnet:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: The subnet used by the Airflow cluster
+      DBSubnetGroupName: AirflowDBSubnet
+      SubnetIds:
+        - !Ref AirflowVPCSubnet
+        - !Ref AirflowVPCSubnet2
+
+
+
+

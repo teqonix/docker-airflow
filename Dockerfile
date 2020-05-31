@@ -63,6 +63,7 @@ RUN set -ex \
     && pip install 'redis==3.2' \
     && pip uninstall -y sqlalchemy \
     && pip install sqlalchemy==1.3.15 \
+    && pip install password \
     && if [ -n "${PYTHON_DEPS}" ]; then pip install ${PYTHON_DEPS}; fi \
     && apt-get purge --auto-remove -yqq $buildDeps \
     && apt-get autoremove -yqq --purge \

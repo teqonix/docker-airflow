@@ -1,0 +1,73 @@
+This is what I did with the AWS Console to get Airflow running:
+
+ECS Cluster Wizard:
+    Instance type t2.micro
+    Desired number of instances 1
+    Key pair ec2_ssh_key
+    ECS AMI ID ami-0d9ef3d936a8fa1c6
+    VPC vpc-0e4829afc4f57d469
+    Subnet 1subnet-06018fe6cb7174af0
+    Subnet 1 route table associationrtbassoc-0567558b713565849
+    Subnet 2subnet-0b0daaf93ba23b7bf
+    Subnet 2 route table associationrtbassoc-0e266218041823429
+    VPC Availability Zonesus-east-2a, us-east-2b, us-east-2c
+    Security groupsg-072d3f463d704cfdd
+    Internet gatewayigw-011f2326a54804b0e
+    Route tablertb-0f529525006310f94
+    Amazon EC2 routeEC2Co-Publi-1Y03YAEYETRGI
+    Virtual private gateway attachmentEC2Co-Attac-LQ1V6QP1CSPX
+    Launch configurationEC2ContainerService-aws-console-ecs-cluster-wizard-test-EcsInstanceLc-1B8IB8GP6QNMB
+    Auto Scaling groupEC2ContainerService-aws-console-ecs-cluster-wizard-test-EcsInstanceAsg-1DGL77UMGIZPE
+
+RDS Settings:
+Configuration
+Value
+Editable after database is created
+Encryption	Enabled	No
+VPC	vpc-0e4829afc4f57d469	No
+Option Group	default:postgres-11	No
+Subnet Group	create-subnet-group	Yes
+Automatic Backups	Enabled	Yes
+VPC Security Group	sg-024bf2b1ea9c08a44	Yes
+Publically Accessible	No	Yes
+Database Port	5432	Yes
+DB Instance Identifier	aws-console-rds-airflow-db-wizard	Yes
+DB Parameter Group	default.postgres11	Yes
+Performance Insights	Enabled	Yes
+Monitoring	Enabled	Yes
+Maintenance	Auto Minor Version Upgrade Enabled	Yes
+Delete Protection	Not Enabled	Yes
+
+
+Need to create the following in Cloudformation:
+
+VPC
+    VPC Endpoints - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/vpc-endpoints.html
+        com.amazonaws.region.ecs-agent
+        com.amazonaws.region.ecs-telemetry
+        com.amazonaws.region.ecs
+    VPC Security Group
+        - Allow all traffic from VPC subnet 
+        - Allow port 22 to EC2 instance
+EC2:   
+    - EC2 Launch Configuration
+        - This seems to create the EC2 instance on its own..
+        - AMI: Amazon ECS-Optimized Amazon Linux 2 AMI
+    - EC2 Autoscaling Launch Configuration..
+    - Add ec2_launch_script to User Data
+        - Mount and format ECS volume (if it is brand new..)
+    - Install the AWS ECS Container Agent https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-agent-install.html
+    ECS Autoscaling Group 
+        - Add EC2 
+ECR Repository
+ECS Task
+
+EBS
+    - 10GB gp2 volume
+
+IAM
+    - Need a role for EC2 instance 
+        - AmazonEC2ContainerServiceforEC2Role
+        - Access to EBS Volume
+        - AutoScalingServiceRolePolicy (Part of the EC2 Autoscaling portion)
+
