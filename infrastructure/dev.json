@@ -9,6 +9,10 @@
     },        
     {
         "ParameterKey": "EC2InstanceType",
-        "ParameterValue": "t2.medium"
+        "ParameterValue": "t2.micro"
+    },
+    {
+        "ParameterKey": "EC2KeyPairName",
+        "ParameterValue": "ec2_ssh_key"
     }
 ]

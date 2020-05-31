@@ -1,16 +1,28 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: A stack that launches an Airflow instance using ECS, EC2, and RDS
 Parameters:
+  AvailabilityZone:
+    Type: String
+    Default: us-east-2
+  AWSAccountNumber:
+    Type: String
+    Default: '386210534560'
   RDSMasterPassword:
     Type: String
   RDSInstanceType:
     Type: String
     Default: db.t2.micro
+  LatestEcsAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id
   EC2InstanceType:
     Type: String
     Default: t2.medium
+  EC2KeyPairName:
+    Type: String
 
 Resources:
+  #----------------------Shared Resources (Networking)----------------------#
   AirflowVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -24,7 +36,7 @@ Resources:
       CidrBlock: 172.16.0.0/28
       MapPublicIpOnLaunch: True
       VpcId: !Ref AirflowVPC
-      AvailabilityZone: "us-east-2a"
+      AvailabilityZone: !Sub ${AvailabilityZone}a
 
   AirflowVPCSubnet2:
     Type: AWS::EC2::Subnet
@@ -32,7 +44,17 @@ Resources:
       CidrBlock: 172.16.1.0/28
       MapPublicIpOnLaunch: True
       VpcId: !Ref AirflowVPC
-      AvailabilityZone: "us-east-2b"
+      AvailabilityZone: !Sub ${AvailabilityZone}b
+
+  # Allow the VPC to connect to the internet:
+  AirflowVPCGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AirflowVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AirflowVPC
+      InternetGatewayId: !Ref AirflowVPCGateway
 
   AirflowVPCSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -45,6 +67,26 @@ Resources:
           FromPort: 5432
           ToPort: 5432
           CidrIp: 172.16.0.0/28
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: ::/0            
+
+    # TODO 2020-05-31 - Need to add these in order for EC2 instance to be reached from the internet
+    # AirflowVPCRouteTable:
+    #   Type: AWS::EC2::RouteTable
+    #   Properties:        
+
+    # AirflowInternetRoute:
+    #   Type: AWS::EC2::Route
+
+  #----------------------Database----------------------#
+
+        # Temporarily disabled to test EFS + IAM Role for EC2
 
   AirflowDatabase:
     Type: AWS::RDS::DBInstance
@@ -74,6 +116,83 @@ Resources:
         - !Ref AirflowVPCSubnet
         - !Ref AirflowVPCSubnet2
 
+  #-----------------------------Persistent Storage-----------------------#
 
+  AirflowPersistantFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
 
+  #---------------------- IAM Permissions for EC2 Instance ----------------------#      
 
+  AirflowEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ssm.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Description: 'Allows an EC2 Instance Access to the Airflow EFS Share'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: GrantAccessToAirflowPersistentStorage
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:DescribeMountTargets
+                Resource: !Sub arn:aws:elasticfilesystem:${AvailabilityZone}:${AWSAccountNumber}:file-system/${AirflowPersistantFileSystem}
+      RoleName: AirflowIamRoleCloudformation
+
+  AirflowLaunchConfigIamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: AirflowIamInstanceProfile
+      Roles: 
+        - !Ref AirflowEC2Role
+
+  #---------------------- EC2 Launch Config / Autoscaling ----------------------#
+  
+  # This specifies what gets launched in EC2 as a part of an autoscaling group:
+  AirflowLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: !Sub ${LatestEcsAmiId} # Use the latest AWS Linux ECS-Optimised AMI
+      InstanceMonitoring: false
+      InstanceType: !Sub ${EC2InstanceType}
+      IamInstanceProfile: !Ref AirflowLaunchConfigIamInstanceProfile
+      KeyName: !Sub ${EC2KeyPairName}
+      LaunchConfigurationName: AirflowLaunchConfigCloudformation
+      SecurityGroups:
+        - !Ref AirflowVPCSecurityGroup
+      
+  AirflowAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: AirflowAutoscalingGroupCloudformation
+      AvailabilityZones:
+        - !Sub ${AvailabilityZone}a
+        - !Sub ${AvailabilityZone}b
+      DesiredCapacity: '1'
+      MaxSize: '1'
+      MinSize: '0'
+      LaunchConfigurationName: !Ref AirflowLaunchConfiguration
+      VPCZoneIdentifier:
+        - !Ref AirflowVPCSubnet
+        - !Ref AirflowVPCSubnet2
+    DependsOn:
+      - AirflowVPCGatewayAttachment
+      - AirflowDatabase

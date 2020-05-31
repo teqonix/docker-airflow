@@ -1,6 +1,6 @@
 .PHONY: create-dev
 create-dev:
-	aws cloudformation create-stack --stack-name AirflowECSCluster --template-body file\://./main.yaml --parameters file\://./dev.json
+	aws cloudformation create-stack --stack-name AirflowECSCluster --capabilities CAPABILITY_NAMED_IAM  --template-body file\://./main.yaml --parameters file\://./dev.json
 
 
 .PHONY: delete-dev
