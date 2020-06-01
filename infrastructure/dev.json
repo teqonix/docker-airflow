@@ -14,5 +14,9 @@
     {
         "ParameterKey": "EC2KeyPairName",
         "ParameterValue": "ec2_ssh_key"
+    },
+    {
+        "ParameterKey": "ECRNumberOfAllowedImages",
+        "ParameterValue": "3"
     }
 ]

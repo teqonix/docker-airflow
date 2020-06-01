@@ -1,0 +1,3 @@
+sudo yum install -y amazon-efs-utils
+sudo yum install -y awscli
+aws cloudformation list-exports --query "Exports[?Name==\`AirflowEfsFilesystemId\`].Value" --no-paginate --output text

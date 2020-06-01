@@ -20,6 +20,8 @@ Parameters:
     Default: t2.medium
   EC2KeyPairName:
     Type: String
+  ECRNumberOfAllowedImages:
+    Type: Number
 
 Resources:
   #----------------------Shared Resources (Networking)----------------------#
@@ -37,14 +39,6 @@ Resources:
       MapPublicIpOnLaunch: True
       VpcId: !Ref AirflowVPC
       AvailabilityZone: !Sub ${AvailabilityZone}a
-
-  AirflowVPCSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      CidrBlock: 172.16.1.0/28
-      MapPublicIpOnLaunch: True
-      VpcId: !Ref AirflowVPC
-      AvailabilityZone: !Sub ${AvailabilityZone}b
 
   # Allow the VPC to connect to the internet:
   AirflowVPCGateway:
@@ -68,6 +62,10 @@ Resources:
           ToPort: 5432
           CidrIp: 172.16.0.0/28
         - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 172.16.0.0/28          
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
@@ -76,45 +74,54 @@ Resources:
           ToPort: 22
           CidrIpv6: ::/0            
 
-    # TODO 2020-05-31 - Need to add these in order for EC2 instance to be reached from the internet
-    # AirflowVPCRouteTable:
-    #   Type: AWS::EC2::RouteTable
-    #   Properties:        
+  AirflowVPCRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AirflowVPC
 
-    # AirflowInternetRoute:
-    #   Type: AWS::EC2::Route
+  AirflowInternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AirflowVPCRouteTable
+      DestinationCidrBlock: 0.0.0.0/0 # Allow ingress from anywhere on the internet
+      GatewayId: !Ref AirflowVPCGateway
+
+  AirflowRouteSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref AirflowVPCRouteTable
+      SubnetId: !Ref AirflowVPCSubnet
 
   #----------------------Database----------------------#
 
         # Temporarily disabled to test EFS + IAM Role for EC2
 
-  AirflowDatabase:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      AllowMajorVersionUpgrade: False
-      AutoMinorVersionUpgrade: True
-      BackupRetentionPeriod: 7
-      DBInstanceClass: !Sub ${RDSInstanceType}
-      DBName: airflow
-      DBSubnetGroupName: !Ref AirflowDBSubnet
-      Engine: postgres
-      MasterUsername: airflow
-      MasterUserPassword: !Sub ${RDSMasterPassword}
-      Port: "5432"
-      StorageEncrypted: False
-      StorageType: gp2
-      VPCSecurityGroups:
-        - !Ref AirflowVPCSecurityGroup
-      AllocatedStorage: "30"
+  # AirflowDatabase:
+  #   Type: AWS::RDS::DBInstance
+  #   Properties:
+  #     AllowMajorVersionUpgrade: False
+  #     AutoMinorVersionUpgrade: True
+  #     BackupRetentionPeriod: 7
+  #     DBInstanceClass: !Sub ${RDSInstanceType}
+  #     DBName: airflow
+  #     DBSubnetGroupName: !Ref AirflowDBSubnet
+  #     Engine: postgres
+  #     MasterUsername: airflow
+  #     MasterUserPassword: !Sub ${RDSMasterPassword}
+  #     Port: "5432"
+  #     StorageEncrypted: False
+  #     StorageType: gp2
+  #     VPCSecurityGroups:
+  #       - !Ref AirflowVPCSecurityGroup
+  #     AllocatedStorage: "30"
 
-  AirflowDBSubnet:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: The subnet used by the Airflow cluster
-      DBSubnetGroupName: AirflowDBSubnet
-      SubnetIds:
-        - !Ref AirflowVPCSubnet
-        - !Ref AirflowVPCSubnet2
+  # AirflowDBSubnet:
+  #   Type: AWS::RDS::DBSubnetGroup
+  #   Properties:
+  #     DBSubnetGroupDescription: The subnet used by the Airflow cluster
+  #     DBSubnetGroupName: AirflowDBSubnet
+  #     SubnetIds:
+  #       - !Ref AirflowVPCSubnet
 
   #-----------------------------Persistent Storage-----------------------#
 
@@ -124,6 +131,14 @@ Resources:
       Encrypted: true
       PerformanceMode: generalPurpose
       ThroughputMode: bursting
+
+  AirflowPersistantStorageMountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref AirflowPersistantFileSystem
+      SecurityGroups:
+        - !Ref AirflowVPCSecurityGroup
+      SubnetId: !Ref AirflowVPCSubnet
 
   #---------------------- IAM Permissions for EC2 Instance ----------------------#      
 
@@ -137,12 +152,10 @@ Resources:
             Principal:
               Service:
                 - ec2.amazonaws.com
-                - ssm.amazonaws.com
+                - ecs.amazonaws.com
             Action:
               - sts:AssumeRole
       Description: 'Allows an EC2 Instance Access to the Airflow EFS Share'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
         - PolicyName: GrantAccessToAirflowPersistentStorage
           PolicyDocument:
@@ -154,6 +167,14 @@ Resources:
                   - elasticfilesystem:ClientWrite
                   - elasticfilesystem:DescribeMountTargets
                 Resource: !Sub arn:aws:elasticfilesystem:${AvailabilityZone}:${AWSAccountNumber}:file-system/${AirflowPersistantFileSystem}
+        - PolicyName: GrantCloudformationListExports
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - cloudformation:ListExports
+                Resource: "*"
       RoleName: AirflowIamRoleCloudformation
 
   AirflowLaunchConfigIamInstanceProfile:
@@ -185,14 +206,54 @@ Resources:
       AutoScalingGroupName: AirflowAutoscalingGroupCloudformation
       AvailabilityZones:
         - !Sub ${AvailabilityZone}a
-        - !Sub ${AvailabilityZone}b
       DesiredCapacity: '1'
       MaxSize: '1'
       MinSize: '0'
       LaunchConfigurationName: !Ref AirflowLaunchConfiguration
       VPCZoneIdentifier:
         - !Ref AirflowVPCSubnet
-        - !Ref AirflowVPCSubnet2
     DependsOn:
       - AirflowVPCGatewayAttachment
-      - AirflowDatabase
+      # - AirflowDatabase
+
+  #---------------------------- ECS (Docker) Resources -------------------------------#
+  AirflowECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: airflow-ecs-cluster
+
+  AirflowECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: airflow-ecr-repository
+      # Only keep up to a certain amount of images in ECR to save on storage costs:
+      LifecyclePolicy:
+        LifecyclePolicyText: | 
+          {
+            "rules": [
+            {
+              "rulePriority": 1,
+              "description": "Only keep 3 images",
+              "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 3
+              },
+              "action": { "type": "expire" }
+            }]
+          }
+
+  # AirflowECSTask:
+  #   Type: AWS::ECS::TaskDefinition
+  #   Properties:
+  #     Essential: true
+
+Outputs:
+  AirflowEfsFilesystemId:
+    Description: The ID generated for the EFS volume used for Airflow persisent storage
+    Value: !Ref AirflowPersistantFileSystem
+    Export:
+      Name: AirflowEfsFilesystemId
+  # AirflowDatabaseHostname:
+  #   Description: The hostname of the RDS instance used for the Airflow backend
+  #   Value: !GetAtt AirflowDatabase.Endpoint.Address
