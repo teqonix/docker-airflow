@@ -1,3 +1,6 @@
 sudo yum install -y amazon-efs-utils
 sudo yum install -y awscli
-aws cloudformation list-exports --query "Exports[?Name==\`AirflowEfsFilesystemId\`].Value" --no-paginate --output text
+export EFSID=`aws cloudformation list-exports --query "Exports[?Name=='AirflowEfsFilesystemId'].Value" --no-paginate --output text --region us-east-2`
+sudo mkdir /mnt/airflow_home
+sudo mount -t efs -o tls $EFSID:/ /mnt/airflow_home
+

@@ -9,6 +9,7 @@ Parameters:
     Default: '386210534560'
   RDSMasterPassword:
     Type: String
+    NoEcho: true
   RDSInstanceType:
     Type: String
     Default: db.t2.micro
@@ -39,6 +40,14 @@ Resources:
       MapPublicIpOnLaunch: True
       VpcId: !Ref AirflowVPC
       AvailabilityZone: !Sub ${AvailabilityZone}a
+
+  AirflowVPCSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 172.16.1.0/28
+      MapPublicIpOnLaunch: True
+      VpcId: !Ref AirflowVPC
+      AvailabilityZone: !Sub ${AvailabilityZone}b
 
   # Allow the VPC to connect to the internet:
   AirflowVPCGateway:
@@ -96,32 +105,56 @@ Resources:
 
         # Temporarily disabled to test EFS + IAM Role for EC2
 
-  # AirflowDatabase:
-  #   Type: AWS::RDS::DBInstance
-  #   Properties:
-  #     AllowMajorVersionUpgrade: False
-  #     AutoMinorVersionUpgrade: True
-  #     BackupRetentionPeriod: 7
-  #     DBInstanceClass: !Sub ${RDSInstanceType}
-  #     DBName: airflow
-  #     DBSubnetGroupName: !Ref AirflowDBSubnet
-  #     Engine: postgres
-  #     MasterUsername: airflow
-  #     MasterUserPassword: !Sub ${RDSMasterPassword}
-  #     Port: "5432"
-  #     StorageEncrypted: False
-  #     StorageType: gp2
-  #     VPCSecurityGroups:
-  #       - !Ref AirflowVPCSecurityGroup
-  #     AllocatedStorage: "30"
+  AirflowDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllowMajorVersionUpgrade: False
+      AutoMinorVersionUpgrade: True
+      BackupRetentionPeriod: 7
+      DBInstanceClass: !Sub ${RDSInstanceType}
+      DBName: airflow
+      DBSubnetGroupName: !Ref AirflowDBSubnet
+      Engine: postgres
+      MasterUsername: airflow
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref AirflowDBPassword, ':SecretString:password}}' ]]
+      Port: "5432"
+      StorageEncrypted: False
+      StorageType: gp2
+      VPCSecurityGroups:
+        - !Ref AirflowVPCSecurityGroup
+      AllocatedStorage: "30"
 
-  # AirflowDBSubnet:
-  #   Type: AWS::RDS::DBSubnetGroup
-  #   Properties:
-  #     DBSubnetGroupDescription: The subnet used by the Airflow cluster
-  #     DBSubnetGroupName: AirflowDBSubnet
-  #     SubnetIds:
-  #       - !Ref AirflowVPCSubnet
+  AirflowDBSubnet:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: The subnet used by the Airflow cluster
+      DBSubnetGroupName: AirflowDBSubnet
+      SubnetIds:
+        - !Ref AirflowVPCSubnet
+        - !Ref AirflowVPCSubnet2
+
+  AirflowDBPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: 'The system-generated master password for the Airflow database.'
+      GenerateSecretString:
+        ExcludeLowercase: false
+        ExcludeNumbers: false
+        ExcludePunctuation: true
+        ExcludeUppercase: false
+        IncludeSpace: false
+        PasswordLength: 26
+        SecretStringTemplate: '{"username": "airflow"}'
+        GenerateStringKey: "password"
+        ExcludeCharacters: '"@/\'        
+      Name: AirflowDatabaseMasterPassword
+
+  SecretRDSInstanceAttachment:
+      Type: "AWS::SecretsManager::SecretTargetAttachment"
+      Properties:
+        SecretId: !Ref AirflowDBPassword
+        TargetId: !Ref AirflowDatabase
+        TargetType: AWS::RDS::DBInstance      
 
   #-----------------------------Persistent Storage-----------------------#
 
@@ -254,6 +287,6 @@ Outputs:
     Value: !Ref AirflowPersistantFileSystem
     Export:
       Name: AirflowEfsFilesystemId
-  # AirflowDatabaseHostname:
-  #   Description: The hostname of the RDS instance used for the Airflow backend
-  #   Value: !GetAtt AirflowDatabase.Endpoint.Address
+  AirflowDatabaseHostname:
+    Description: The hostname of the RDS instance used for the Airflow backend
+    Value: !GetAtt AirflowDatabase.Endpoint.Address
